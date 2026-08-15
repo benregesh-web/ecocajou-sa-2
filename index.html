@@ -3,52 +3,455 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre de Pointage</title>
-<link rel="stylesheet" href="style.css">
+<title>Registre Cantine ECOCAJOU SA</title>
+<style>
+body{font-family:Arial; background:#f4f4f4; margin:0; padding:15px;}
+.bloc{background:white; padding:15px; margin-bottom:15px; border-radius:8px; box-shadow:0 2px 4px #ccc;}
+.cacher{display:none;}
+.btn-bleu{background:#007bff; color:white; border:none; padding:8px 12px; cursor:pointer; border-radius:4px;}
+.btn-vert{background:#28a745; color:white; border:none; padding:8px 12px; cursor:pointer; border-radius:4px;}
+.btn-rouge{background:#dc3545; color:white; border:none; padding:8px 12px; cursor:pointer; border-radius:4px;}
+.btn-cyan{background:#17a2b8; color:white; border:none; padding:8px 12px; cursor:pointer; border-radius:4px;}
+.btn-jaune{background:#ffc107; color:black; border:none; padding:8px 12px; cursor:pointer; border-radius:4px;}
+.btn-violet{background:#6f42c1; color:white; border:none; padding:8px 12px; cursor:pointer; border-radius:4px;}
+.btn-gris{background:#6c757d; color:white; border:none; padding:8px 12px; cursor:pointer; border-radius:4px;}
+input, select{padding:8px; margin:5px; border:1px solid #ccc; border-radius:4px;}
+.section-bloc{border:1px solid #ddd; padding:10px; margin-top:10px; border-radius:5px;}
+.mange{color:green; font-weight:bold;}.present{color:orange; font-weight:bold;}
+.totaux{display:flex; gap:20px; font-size:18px; font-weight:bold; flex-wrap:wrap;}
+.totaux div{padding:8px 12px; border-radius:5px;}
+#totalEnregistres{background:#e7f3ff;} #totalMangeGeneral{background:#e6ffe6;} #totalRestant{background:#ffe6e6;}
+ul{list-style:none; padding:0;} li{display:flex; justify-content:space-between; padding:5px; border-bottom:1px dotted #eee;}
+.nav-bar{display:flex; gap:10px; margin:10px 0; flex-wrap:wrap;}
+.msg-box{padding:10px; margin-top:10px; border-radius:5px; font-weight:bold;}
+</style>
 
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
+  import { getFirestore, doc, getDoc, setDoc, collection, getDocs, query, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDzbXrQ7NqrtDWxTIw_qwCWTZ_0tXOSF8Y",
+    authDomain: "ecocajou-sa-2.firebaseapp.com",
+    projectId: "ecocajou-sa-2",
+    storageBucket: "ecocajou-sa-2.firebasestorage.app",
+    messagingSenderId: "295267321893",
+    appId: "1:295267321893:web:d39da96c9be7ac3bb397cc"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  const CODE_SECRET = "BEN2026";
+  const CODE_RESET = "RESET2026";
+  const CODE_VOIR = "VOIR2026";
+  let cacheActif = false;
+  let dernierResultatRecherche = [];
+  let unsubscribe = null;
+
+  const sections = [
+      "MAGASIN NOIX BRUTE", "QUALITE NOIX BRUTE", "CALLIBRAGE", "CALLIBRAGE CARISTE", "CHAUDIERE", "COQUE","COQUE CHAUFFEUR",
+      "LAVAGE EQUIPEMENT","CUISSON", "CUISSON CARISTE","DECO HOMME", "DECO FEMME", "QUALITE DECO", "ENTRETIEN DECO", "SCOOPING","SCOOPING CORRECTION",
+      "ETUVAGE", "GESTIONNAIRE/MAGASIN PIECES DE RECHANGE", "MAINTENANCE", "CONTROLEUR FOUR","DP AUTO", "CONCASSAGE","CLASS MANUEL", "CLASS AUTO","EMBALLAGE 1",
+      "EMBALLAGE 2", "ENTRETIEN EMBALLAGE", "MAGASIN PRODUIT FINIS", "DPM GROS SALLE","DPM Elèves", "Niamatogola","DPM CORRECTRISES", "ENTRETIEN DPM",
+      "ENTRETIEN ZONE BLANCHE", "ENTRETIEN ADMINISTRATION", "OPERATEUR PESEE", "SECTION HYGIENE", "BUANDERIE", "ENTRETIEN", "ENTRETIEN ZONE NON BATI",
+      "CANTINE", "DISTRI.PROD MAN", "ADMINISTRATION", "ELEVES GARCONS"
+  ];
+
+  let allData = {};
+  let jourActuel = new Date().toISOString().split('T')[0];
+  let sectionBloquee = "";
+
+  document.addEventListener('DOMContentLoaded', () => {
+      remplirSelects();
+      chargerListeJours();
+      attacherTousLesBoutons();
+      document.getElementById('codeAjout').addEventListener('keypress', e => { if(e.key === 'Enter') ajouterCode(); });
+      document.getElementById('codeVerif').addEventListener('keypress', e => { if(e.key === 'Enter') verifierCode(); });
+  });
+
+  function attacherTousLesBoutons() {
+      document.getElementById('btnEntrer').onclick = verifierAcces;
+      document.getElementById('btnCharger').onclick = chargerJour;
+      document.getElementById('btnNouveau').onclick = nouveauJour;
+      document.getElementById('btnChargerSel').onclick = chargerJourSelectionne;
+      document.getElementById('btnExportExcel').onclick = exporterExcel;
+      document.getElementById('btnExportPDF').onclick = exporterPDF;
+      document.getElementById('btnRecher').onclick = rechercherCodeHistorique;
+      document.getElementById('btnExportRech').onclick = exporterRechercheExcel;
+      document.getElementById('btnAjouter').onclick = ajouterCode;
+      document.getElementById('btnVerifier').onclick = verifierCode;
+      document.getElementById('btnImprimer').onclick = () => window.print();
+      document.getElementById('btnReset').onclick = resetJour;
+      document.getElementById('btnImpSection').onclick = imprimerSection;
+      document.getElementById('btnCache').onclick = toggleCache;
+      document.getElementById('btnDeconnexion').onclick = deconnexion;
+      document.getElementById('navSections').onchange = allerAlaSection;
+  }
+
+  function remplirSelects() {
+      let selectAjout = document.getElementById('sectionAjout');
+      let selectNav = document.getElementById('navSections');
+      selectAjout.innerHTML = ''; selectNav.innerHTML = '<option value="">-- Aller à une Section --</option>';
+      sections.forEach(s => {
+          selectAjout.innerHTML += `<option value="${s}">${s}</option>`;
+          selectNav.innerHTML += `<option value="${s}">${s}</option>`;
+      });
+  }
+
+  function allerAlaSection() {
+      let section = document.getElementById('navSections').value;
+      if(section) document.getElementById(section.replace(/\s+/g, '-'))?.scrollIntoView({behavior: 'smooth'});
+  }
+
+  function verifierAcces() {
+      let code = document.getElementById('codeAcces').value;
+      if(code === CODE_SECRET) {
+          document.getElementById('pageLogin').classList.add('cacher');
+          document.getElementById('pagePrincipale').classList.remove('cacher');
+          document.getElementById('selectDate').value = jourActuel;
+          chargerJour();
+      } else document.getElementById('msgErreur').innerText = "Code incorrect!";
+  }
+
+  function ecouterChangements() {
+      if(unsubscribe) unsubscribe();
+      const docRef = doc(db, "registres", jourActuel);
+      unsubscribe = onSnapshot(docRef, (docSnap) => {
+          if (docSnap.exists()) {
+              allData[jourActuel] = docSnap.data();
+              afficher();
+          }
+      });
+  }
+
+  async function chargerListeJours() {
+      const q = query(collection(db, "registres"), orderBy("__name__", "desc"));
+      const querySnapshot = await getDocs(q);
+      let select = document.getElementById('listeJours'); select.innerHTML = '';
+      querySnapshot.forEach((docSnap) => select.innerHTML += `<option value="${docSnap.id}">${docSnap.id}</option>`);
+  }
+
+  async function chargerJourSelectionne() {
+      let dateChoisie = document.getElementById('listeJours').value;
+      if(!dateChoisie) return;
+      document.getElementById('selectDate').value = dateChoisie;
+      jourActuel = dateChoisie;
+      await chargerJour();
+  }
+
+  async function nouveauJour() {
+      jourActuel = document.getElementById('selectDate').value;
+      if(!jourActuel) return alert("Choisissez une date");
+      const docRef = doc(db, "registres", jourActuel);
+      const docSnap = await getDoc(docRef);
+      if(!docSnap.exists()) {
+          let dataVide = {}; sections.forEach(s => dataVide[s] = []);
+          await setDoc(docRef, dataVide);
+          await chargerListeJours();
+      }
+      chargerJour();
+  }
+
+  async function chargerJour() {
+      jourActuel = document.getElementById('selectDate').value;
+      if(!jourActuel) return alert("Choisissez une date");
+      sectionBloquee = "";
+      const docRef = doc(db, "registres", jourActuel);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+          allData[jourActuel] = docSnap.data();
+      } else {
+          allData[jourActuel] = {};
+          sections.forEach(s => allData[jourActuel][s] = []);
+          await setDoc(docRef, allData[jourActuel]);
+          await chargerListeJours();
+      }
+      ecouterChangements();
+  }
+
+  async function sauvegarder() {
+      const docRef = doc(db, "registres", jourActuel);
+      await setDoc(docRef, allData[jourActuel]);
+  }
+
+  function afficher() {
+      document.getElementById('titreDate').innerText = jourActuel;
+      let dataJour = allData[jourActuel] || {};
+      if(sectionBloquee!== "" && dataJour[sectionBloquee]){ afficherUneSection(sectionBloquee, dataJour[sectionBloquee]); return; }
+      let html = ''; let totalGeneralEnregistres = 0; let totalGeneralMange = 0;
+      sections.forEach(section => {
+          let agents = dataJour[section] || [];
+          agents.sort((a, b) => a.code.localeCompare(b.code));
+          let totalEnregistres = agents.length;
+          let totalMange = agents.filter(a => a.mange).length;
+          let totalRestant = totalEnregistres - totalMange;
+          totalGeneralEnregistres += totalEnregistres;
+          totalGeneralMange += totalMange;
+          let idSection = section.replace(/\s+/g, '-');
+          html += `<div class="section-bloc" id="${idSection}">
+            <h3>${section} <span>(${totalEnregistres})</span> | <span style="color:green;">Mangé: ${totalMange}</span> | <span style="color:red;">Restant: ${totalRestant}</span></h3><ul>`;
+          html += agents.map(a => {
+              let codeAffiche = cacheActif? "******" : a.code;
+              return `<li>${codeAffiche} <span class="${a.mange? 'mange' : 'present'}">${a.mange? 'MANGÉ' : 'PRÉSENT'}</span> <button onclick="supprimerCodeGlobal('${section}', '${a.code}')">X</button></li>`;
+          }).join('');
+          html += `</ul></div>`;
+      });
+      document.getElementById('totalEnregistres').innerText = `TOTAL ENREGISTRÉS: ${totalGeneralEnregistres}`;
+      document.getElementById('totalMangeGeneral').innerText = `TOTAL ONT MANGÉ: ${totalGeneralMange}`;
+      document.getElementById('totalRestant').innerText = `TOTAL RESTANT: ${totalGeneralEnregistres - totalGeneralMange}`;
+      document.getElementById('conteneurSections').innerHTML = html;
+  }
+
+  window.supprimerCodeGlobal = async function(section, code) {
+      if(confirm(`Supprimer le code ${code}?`)) {
+          allData[jourActuel][section] = allData[jourActuel][section].filter(a => a.code!== code);
+          await sauvegarder();
+      }
+  }
+
+  function afficherUneSection(nomSection, agents) {
+      agents.sort((a, b) => a.code.localeCompare(b.code));
+      let totalMange = agents.filter(a => a.mange).length;
+      let totalRestant = agents.length - totalMange;
+      let html = `<div class="section-bloc"><h3>${nomSection} <span>(${agents.length})</span> | <span style="color:green;">Mangé: ${totalMange}</span> | <span style="color:red;">Restant: ${totalRestant}</span></h3><ul>`;
+      html += agents.map(a => { let codeAffiche = cacheActif? "******" : a.code; return `<li>${codeAffiche} <span class="${a.mange? 'mange' : 'present'}">${a.mange? 'MANGÉ' : 'PRÉSENT'}</span></li>`; }).join('');
+      html += `</ul></div>`;
+      html += `<button id="btnVoirTout" class="btn-jaune">VOIR TOUTES SECTIONS</button>`;
+      document.getElementById('conteneurSections').innerHTML = html;
+      document.getElementById('btnVoirTout').onclick = () => { sectionBloquee=''; afficher(); };
+  }
+
+  // FONCTION POUR TROUVER SI CODE EXISTE DEJA DANS LA JOURNEE
+  function trouverCodeDansJournee(code) {
+      for(let s in allData[jourActuel]) {
+          let agent = allData[jourActuel][s].find(a => a.code === code);
+          if(agent) return {section: s, agent: agent};
+      }
+      return null;
+  }
+
+  // AJOUTER AVEC MESSAGE COMME DEMANDE
+  async function ajouterCode() {
+      let code = document.getElementById('codeAjout').value.trim().toUpperCase();
+      let section = document.getElementById('sectionAjout').value;
+      let msgAjout = document.getElementById('msgAjout');
+
+      if(!code) return alert("Tapez un code");
+      if(!jourActuel) return alert("Choisissez d'abord une date");
+
+      if(!allData[jourActuel]) {
+          allData[jourActuel] = {};
+          sections.forEach(s => allData[jourActuel][s] = []);
+      }
+
+      // VERIF: CODE UNIQUE POUR TOUTE LA JOURNEE
+      let dejaExiste = trouverCodeDansJournee(code);
+      if(dejaExiste) {
+          msgAjout.innerHTML = `<div class="msg-box" style="background:#ffe6e6; color:red;">❌ ERREUR : Le code ${code} existe déjà dans ${dejaExiste.section}</div>`;
+          return;
+      }
+
+      allData[jourActuel][section].push({code: code, nom: '', mange: false});
+      await sauvegarder();
+
+      msgAjout.innerHTML = `<div class="msg-box" style="background:#e6ffe6; color:green;">✅ Code ${code} ajouté à ${section}</div>`;
+      document.getElementById('codeAjout').value = '';
+      document.getElementById('codeAjout').focus();
+  }
+
+  // VERIFIER AVEC MESSAGE COMME DEMANDE
+  async function verifierCode() {
+      let code = document.getElementById('codeVerif').value.trim().toUpperCase();
+      let msgVerif = document.getElementById('msgVerif');
+      if(!code) return alert("Tapez un code");
+      if(!allData[jourActuel]) return alert("Chargez d'abord une journée");
+
+      let resultat = trouverCodeDansJournee(code);
+
+      if(resultat) {
+          let sectionTrouvee = resultat.section;
+          let agentTrouve = resultat.agent;
+
+          if(agentTrouve.mange === false) {
+              agentTrouve.mange = true;
+              await sauvegarder();
+              msgVerif.innerHTML = `<div class="msg-box" style="background:#e6ffe6; color:green;">
+                  ${code} trouvé dans ${sectionTrouvee}<br>
+                  ✅ STATUT: PRÉSENT<br>
+                  🍽️ IL A DROIT A 1 PLAT<br>
+                  <b>Validez et donnez lui son plat.</b>
+              </div>`;
+          } else {
+              msgVerif.innerHTML = `<div class="msg-box" style="background:#ffe6e6; color:red;">
+                  ${code} trouvé dans ${sectionTrouvee}<br>
+                  ❌ STATUT: A DÉJÀ PRIS SON PLAT<br>
+                  <b>IL N'A PLUS DROIT A UN AUTRE PLAT AUJOURD'HUI</b>
+              </div>`;
+          }
+          sectionBloquee = sectionTrouvee; afficherUneSection(sectionBloquee, allData[jourActuel][sectionBloquee]);
+          document.getElementById('codeVerif').value = ''; document.getElementById('codeVerif').focus();
+      } else {
+          msgVerif.innerHTML = `<div class="msg-box" style="background:#ffe6e6; color:red;">❌ Code ${code} non trouvé aujourd'hui</div>`;
+          document.getElementById('codeVerif').value = '';
+          document.getElementById('codeVerif').focus();
+      }
+  }
+
+  async function rechercherCodeHistorique() {
+      let codeCherche = document.getElementById('codeRecherche').value.trim().toUpperCase();
+      if(!codeCherche) return alert("Tapez un code à rechercher");
+      document.getElementById('resultatRecherche').innerHTML = "Recherche en cours...";
+      dernierResultatRecherche = [];
+      const q = query(collection(db, "registres"), orderBy("__name__", "desc"));
+      const querySnapshot = await getDocs(q);
+      let html = `<h4>Résultats pour: <b>${codeCherche}</b></h4><table border="1" style="width:100%;"><tr style="background:#ddd;"><th>Date</th><th>Section</th><th>Statut</th></tr>`;
+      let trouve = false;
+      querySnapshot.forEach((docSnap) => {
+          let date = docSnap.id; let dataJour = docSnap.data();
+          for(let section in dataJour) {
+              let agent = dataJour[section].find(a => a.code === codeCherche);
+              if(agent) {
+                  trouve = true;
+                  let statut = agent.mange? "🍽️ A MANGE" : "👤 PRESENT";
+                  html += `<tr><td>${date}</td><td>${section}</td><td>${statut}</td></tr>`;
+                  dernierResultatRecherche.push({Date: date, Section: section, Statut: statut});
+              }
+          }
+      });
+      html += `</table>`;
+      if(!trouve) html = `<p style="color:red;">❌ Le code ${codeCherche} introuvable.</p>`;
+      else html += `<p style="color:green;">✅ Total: ${dernierResultatRecherche.length} pointages</p>`;
+      document.getElementById('resultatRecherche').innerHTML = html;
+  }
+
+  function exporterRechercheExcel() {
+      if(dernierResultatRecherche.length === 0) return alert("Faites d'abord une recherche");
+      const ws = XLSX.utils.json_to_sheet(dernierResultatRecherche);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Historique");
+      XLSX.writeFile(wb, `Historique_${document.getElementById('codeRecherche').value}.xlsx`);
+  }
+
+  function exporterExcel() {
+      let dataJour = allData[jourActuel];
+      let ws_data = [["Section", "Code Agent", "Statut"]];
+      for(let section in dataJour) {
+          dataJour[section].sort((a, b) => a.code.localeCompare(b.code));
+          dataJour[section].forEach(agent => {
+              ws_data.push([section, agent.code, agent.mange? "A MANGE" : "PRESENT"]);
+          });
+      }
+      const ws = XLSX.utils.aoa_to_sheet(ws_data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, jourActuel);
+      XLSX.writeFile(wb, `Pointage_${jourActuel}.xlsx`);
+  }
+
+  function exporterPDF() {
+      let dataJour = allData[jourActuel];
+      let htmlImpression = `<h1>POINTAGE CANTINE - ${jourActuel}</h1>`;
+      for(let section in dataJour) {
+          if(dataJour[section].length > 0) {
+              dataJour[section].sort((a, b) => a.code.localeCompare(b.code));
+              htmlImpression += `<h3>${section}</h3><table border="1" style="width:100%;"><tr><th>N°</th><th>CODE</th><th>STATUT</th></tr>`;
+              dataJour[section].forEach((a, index) => {
+                  htmlImpression += `<tr><td>${index + 1}</td><td>${a.code}</td><td>${a.mange? "A MANGE" : "PRESENT"}</td></tr>`;
+              });
+              htmlImpression += `</table><br>`;
+          }
+      }
+      let f = window.open('', '', 'height=700,width=900');
+      f.document.write(htmlImpression); f.document.close(); f.print();
+  }
+
+  async function resetJour() {
+      let code = prompt("Tapez le Code RESET:");
+      if(code!== CODE_RESET) { alert("❌ Code incorrect!"); return; }
+      if(confirm("Supprimer toutes les données de cette journée?")) {
+          allData[jourActuel] = {}; sections.forEach(s => allData[jourActuel][s] = []);
+          await sauvegarder(); await chargerListeJours(); sectionBloquee = ""; alert("✅ Journée réinitialisée");
+      }
+  }
+
+  function imprimerSection() {
+      let section = prompt("Quelle section imprimer? En majuscule");
+      if(!section) return; section = section.toUpperCase();
+      let agentsDeLaSection = allData[jourActuel][section] || [];
+      if(agentsDeLaSection.length === 0) { alert("Aucun agent trouvé dans cette section"); return; }
+      agentsDeLaSection.sort((a, b) => a.code.localeCompare(b.code));
+      let htmlImpression = `<h1>LISTE CANTINE - ${section} - ${jourActuel}</h1><table border="1" style="width:100%;"><tr><th>N°</th><th>CODE</th><th>STATUT</th></tr>`;
+      agentsDeLaSection.forEach((a, index) => { htmlImpression += `<tr><td>${index + 1}</td><td>${a.code}</td><td>${a.mange? "A MANGÉ" : "PRÉSENT"}</td></tr>`; });
+      htmlImpression += `</table>`;
+      let f = window.open('', '', 'height=700,width=900');
+      f.document.write(htmlImpression); f.document.close(); f.print();
+  }
+
+  function toggleCache() {
+      if(!cacheActif) { cacheActif = true; document.getElementById('btnCache').innerText = "🔒 Afficher Codes"; }
+      else { let code = prompt("Tapez le Code pour AFFICHER:"); if(code!== CODE_VOIR) { alert("❌ Code incorrect!"); return; } cacheActif = false; document.getElementById('btnCache').innerText = "👁️ Cacher Codes"; }
+      afficher();
+  }
+
+  function deconnexion() {
+      document.getElementById('pagePrincipale').classList.add('cacher');
+      document.getElementById('pageLogin').classList.remove('cacher');
+      document.getElementById('codeAcces').value = '';
+  }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <div id="pageLogin" class="bloc">
     <h2>Connexion</h2>
     <input type="password" id="codeAcces" placeholder="Tapez le code d'accès">
-    <button onclick="verifierAcces()" class="btn-bleu">Entrer</button>
+    <button id="btnEntrer" class="btn-bleu">Entrer</button>
     <p id="msgErreur" style="color:red;"></p>
 </div>
 
 <div id="pagePrincipale" class="cacher">
     <div class="bloc">
-        <button onclick="deconnexion()" class="btn-rouge" style="float:right;">Déconnexion</button>
+        <button id="btnDeconnexion" class="btn-rouge" style="float:right;">Déconnexion</button>
         <h2>GESTION CANTINE - ECOCAJOU SA ODIENNE</h2>
+        <div style="border:1px solid #ccc; padding:10px;">
+            <h3>📅 Historique</h3>
+            <select id="listeJours"></select>
+            <button id="btnChargerSel" class="btn-cyan">Charger</button>
+            <button id="btnExportExcel" class="btn-vert">📊 Excel</button>
+            <button id="btnExportPDF" class="btn-violet">📄 PDF</button>
+        </div>
+        <div style="border:1px solid green; padding:10px; background:#f0fff0;">
+            <h3>🔍 Rechercher un Agent</h3>
+            <input type="text" id="codeRecherche" placeholder="Tapez le Code Agent">
+            <button id="btnRecher" class="btn-bleu">Rechercher</button>
+            <button id="btnExportRech" class="btn-vert">📊 Exporter Résultat</button>
+            <div id="resultatRecherche" style="margin-top:10px;"></div>
+        </div>
         <label>Choisir Date: </label>
         <input type="date" id="selectDate">
-        <button onclick="chargerJour()" class="btn-cyan">Charger ce jour</button>
-        <button onclick="nouveauJour()" class="btn-bleu">+ Nouveau Jour</button>
-        
-        <!-- BARRE DE NAVIGATION NOUVELLE -->
+        <button id="btnCharger" class="btn-cyan">Charger ce jour</button>
+        <button id="btnNouveau" class="btn-bleu">+ Nouveau Jour</button>
         <div class="nav-bar">
-            <select id="navSections" onchange="allerAlaSection()">
-                <option value="">-- Aller à une Section --</option>
-            </select>
-            <button onclick="toggleCache()" id="btnCache" class="btn-gris">👁️ Cacher Codes</button>
+            <select id="navSections"></select>
+            <button id="btnCache" class="btn-gris">👁️ Cacher Codes</button>
         </div>
-
-        <button onclick="window.print()" class="btn-jaune">🖨️ Imprimer</button>
-        <button onclick="resetJour()" class="btn-rouge">🗑️ Tout Réinitialiser</button>
-        <button onclick="imprimerSection()" class="btn-violet">IMPRIMER LISTE</button>
+        <button id="btnImprimer" class="btn-jaune">🖨️ Imprimer</button>
+        <button id="btnReset" class="btn-rouge">🗑️ Tout Réinitialiser</button>
+        <button id="btnImpSection" class="btn-violet">IMPRIMER LISTE</button>
     </div>
 
     <div class="bloc">
         <h2>Ajouter un Code</h2>
         <input type="text" id="codeAjout" placeholder="Code Agent">
         <select id="sectionAjout"></select>
-        <button onclick="ajouterCode()" class="btn-vert">Ajouter</button>
+        <button id="btnAjouter" class="btn-vert">Ajouter</button>
         <p id="msgAjout"></p>
     </div>
 
     <div class="bloc">
         <h2>Vérifier un Code</h2>
         <input type="text" id="codeVerif" placeholder="Code Agent">
-        <button onclick="verifierCode()" class="btn-cyan">Vérifier</button>
+        <button id="btnVerifier" class="btn-cyan">Vérifier</button>
         <p id="msgVerif"></p>
     </div>
 
@@ -56,238 +459,9 @@
     <div class="totaux">
         <div id="totalEnregistres">TOTAL ENREGISTRÉS: 0</div>
         <div id="totalMangeGeneral">TOTAL ONT MANGÉ: 0</div>
+        <div id="totalRestant">TOTAL RESTANT: 0</div>
     </div>
     <div id="conteneurSections"></div>
 </div>
-
-<script>
-const CODE_SECRET = "BEN2026";
-const CODE_RESET = "RESET2026";
-const CODE_VOIR = "VOIR2026";
-let cacheActif = false;
-
-const sections = [
-    "MAGASIN NOIX BRUTE", "QUALITE NOIX BRUTE", "CALLIBRAGE", "CALLIBRAGE CARISTE", "CHAUDIERE", "COQUE","COQUE CHAUFFEUR",
-    "LAVAGE EQUIPEMENT","CUISSON", "CUISSON CARISTE","DECO HOMME", "DECO FEMME", "QUALITE DECO", "ENTRETIEN DECO", "SCOOPING","SCOOPING CORRECTION",
-    "ETUVAGE", "GESTIONNAIRE/MAGASIN PIECES DE RECHANGE", "MAINTENANCE", "CONTROLEUR FOUR","DP AUTO", "CONCASSAGE","CLASS MANUEL", "CLASS AUTO","EMBALLAGE 1",
-    "EMBALLAGE 2", "ENTRETIEN EMBALLAGE", "MAGASIN PRODUIT FINIS", "DPM GROS SALLE","DPM Elèves", "Niamatogola","DPM CORRECTRISES", "ENTRETIEN DPM",
-    "ENTRETIEN ZONE BLANCHE", "ENTRETIEN ADMINISTRATION", "OPERATEUR PESEE", "SECTION HYGIENE", "BUANDERIE", "ENTRETIEN", "ENTRETIEN ZONE NON BATI",
-    "CANTINE", "DISTRI.PROD MAN", "ADMINISTRATION", "ELEVES GARCONS"
-];
-
-let allData = JSON.parse(localStorage.getItem('registresPointage')) || {};
-let jourActuel = new Date().toISOString().split('T')[0];
-let sectionBloquee = "";
-
-// REMPLIR LES SELECTS
-window.onload = function() {
-    let selectAjout = document.getElementById('sectionAjout');
-    let selectNav = document.getElementById('navSections');
-    sections.forEach(s => {
-        let opt1 = document.createElement('option');
-        opt1.value = s; opt1.textContent = s;
-        selectAjout.appendChild(opt1);
-        
-        let opt2 = document.createElement('option');
-        opt2.value = s; opt2.textContent = s;
-        selectNav.appendChild(opt2);
-    });
-}
-
-// FONCTION POUR ALLER A LA SECTION
-function allerAlaSection() {
-    let section = document.getElementById('navSections').value;
-    if(section) {
-        document.getElementById(section.replace(/\s+/g, '-')).scrollIntoView({behavior: 'smooth'});
-        document.getElementById('navSections').value = ""; // reset
-    }
-}
-
-function verifierAcces() {
-    let code = document.getElementById('codeAcces').value;
-    if(code === CODE_SECRET) {
-        document.getElementById('pageLogin').classList.add('cacher');
-        document.getElementById('pagePrincipale').classList.remove('cacher');
-        document.getElementById('selectDate').value = jourActuel;
-        nouveauJour();
-    } else {
-        document.getElementById('msgErreur').innerText = "Code incorrect!";
-    }
-}
-
-function nouveauJour() {
-    if(!allData[jourActuel]) {
-        allData[jourActuel] = {};
-        sections.forEach(s => allData[jourActuel][s] = []);
-        sauvegarder();
-    }
-    afficher();
-}
-
-function chargerJour() {
-    jourActuel = document.getElementById('selectDate').value;
-    sectionBloquee = "";
-    afficher();
-}
-
-function sauvegarder() {
-    localStorage.setItem('registresPointage', JSON.stringify(allData));
-}
-
-function afficher() {
-    document.getElementById('titreDate').innerText = jourActuel;
-    let dataJour = allData[jourActuel] || {};
-
-    if(sectionBloquee!== "" && dataJour[sectionBloquee]){
-        afficherUneSection(sectionBloquee, dataJour[sectionBloquee]);
-        return;
-    }
-
-    let html = '';
-    let totalGeneralEnregistres = 0;
-    let totalGeneralMange = 0;
-
-    sections.forEach(section => {
-        let agents = dataJour[section] || [];
-        let totalEnregistres = agents.length;
-        let totalMange = agents.filter(a => a.mange).length;
-
-        totalGeneralEnregistres += totalEnregistres;
-        totalGeneralMange += totalMange;
-
-        // ID pour la navigation
-        let idSection = section.replace(/\s+/g, '-');
-
-        html += `<div class="section-bloc" id="${idSection}">
-            <h3>${section} <span style="font-size:12px; font-weight:normal;">(${totalEnregistres})</span> | <span style="color:green; font-size:12px;">Mangé: ${totalMange}</span></h3>
-            <ul>`;
-
-        html += agents.map(a => {
-            let codeAffiche = cacheActif? "******" : a.code;
-            return `<li>${codeAffiche} <span class="${a.mange?  'mange' :  'present'}">${a.mange?   'MANGÉ' :   'PRÉSENT'}</span>
-            <button onclick="supprimerCode('${section}', '${a.code}')">X</button></li>`;
-        }).join('');
-
-        html += `</ul></div>`;
-    });
-
-    document.getElementById('totalEnregistres').innerText = `TOTAL ENREGISTRÉS: ${totalGeneralEnregistres}`;
-    document.getElementById('totalMangeGeneral').innerText = `TOTAL ONT MANGÉ: ${totalGeneralMange}`;
-    document.getElementById('conteneurSections').innerHTML = html;
-}
-
-function ajouterCode() {
-    let code = document.getElementById('codeAjout').value.trim().toUpperCase();
-    let section = document.getElementById('sectionAjout').value;
-    if(!code) return alert("Tapez un code");
-    let dejaExiste = false;
-    for(let s in allData[jourActuel]) {
-        if(allData[jourActuel][s].find(a => a.code === code)) { dejaExiste = true; break; }
-    }
-    if(dejaExiste) {
-        document.getElementById('msgAjout').innerHTML = `<span style="color:red;">❌ Le code ${code} existe déjà</span>`;
-        return;
-    }
-    allData[jourActuel][section].push({code: code, nom: '', mange: false});
-    sauvegarder();
-    document.getElementById('msgAjout').innerHTML = `<span style="color:green;">✅ Code ${code} ajouté</span>`;
-    document.getElementById('codeAjout').value = '';
-    afficher();
-}
-
-function verifierCode() {
-    let code = document.getElementById('codeVerif').value.trim().toUpperCase();
-    let msgVerif = document.getElementById('msgVerif');
-    if(!code) return alert("Tapez un code");
-    let trouve = false;
-    let sectionTrouvee = "";
-    let agentTrouve = null;
-    for(let s in allData[jourActuel]) {
-        let agent = allData[jourActuel][s].find(a => a.code === code);
-        if(agent) { trouve = true; agentTrouve = agent; sectionTrouvee = s; break; }
-    }
-    if(trouve) {
-        if(agentTrouve.mange === false) {
-            agentTrouve.mange = true;
-            msgVerif.innerHTML = `<span style="color:green;"><b>${code}</b> dans <b>${sectionTrouvee}</b><br>✅ PRÉSENT<br>🍽️ IL A DROIT A 1 PLAT</span>`;
-        } else {
-            msgVerif.innerHTML = `<span style="color:red;"><b>${code}</b> dans <b>${sectionTrouvee}</b><br>❌ A DÉJÀ PRIS SON PLAT</span>`;
-        }
-        sauvegarder();
-        sectionBloquee = sectionTrouvee;
-        afficherUneSection(sectionBloquee, allData[jourActuel][sectionBloquee]);
-        document.getElementById('codeVerif').value = '';
-        document.getElementById('codeVerif').focus();
-    } else {
-        msgVerif.innerHTML = `<span style="color:red;">❌ Code ${code} non trouvé</span>`;
-        document.getElementById('codeVerif').value = '';
-        document.getElementById('codeVerif').focus();
-    }
-}
-
-function afficherUneSection(nomSection, agents) {
-    let totalMange = agents.filter(a => a.mange).length;
-    let html = `<div class="section-bloc">
-        <h3>${nomSection} <span style="font-size:12px;">(${agents.length})</span> | <span style="color:green;">Mangé: ${totalMange}</span></h3>
-        <ul>`;
-    html += agents.map(a => {
-        let codeAffiche = cacheActif? "******" : a.code;
-        return `<li>${codeAffiche} <span class="${a.mange? 'mange' : 'present'}">${a.mange? 'MANGÉ' : 'PRÉSENT'}</span></li>`;
-    }).join('');
-    html += `</ul></div>`;
-    html += `<button onclick="sectionBloquee=''; afficher();" class="btn-jaune" style="color:#000;">VOIR TOUTES SECTIONS</button>`;
-    document.getElementById('conteneurSections').innerHTML = html;
-}
-
-function supprimerCode(section, code) {
-    if(confirm(`Supprimer le code ${code}?`)) {
-        allData[jourActuel][section] = allData[jourActuel][section].filter(a => a.code!== code);
-        sauvegarder(); afficher();
-    }
-}
-
-function resetJour() {
-    let code = prompt("Tapez le Code RESET:");
-    if(code!== CODE_RESET) { alert("❌ Code incorrect!"); return; }
-    if(confirm("Supprimer toutes les données de cette journée?")) {
-        allData[jourActuel] = {}; sections.forEach(s => allData[jourActuel][s] = []);
-        sauvegarder(); sectionBloquee = ""; afficher(); alert("✅ Journée réinitialisée");
-    }
-}
-
-function imprimerSection() {
-    let section = prompt("Quelle section imprimer?");
-    if(!section) return;
-    section = section.toUpperCase();
-    let agentsDeLaSection = allData[jourActuel][section] || [];
-    if(agentsDeLaSection.length === 0) { alert("Aucun agent trouvé"); return; }
-    let htmlImpression = `<h1>LISTE CANTINE - ${section}</h1><table border="1" style="width:100%;">
-    <tr><th>N°</th><th>CODE</th><th>STATUT</th></tr>`;
-    agentsDeLaSection.forEach((a, index) => {
-        let statut = a.mange? "A MANGÉ" : "PRÉSENT";
-        htmlImpression += `<tr><td>${index + 1}</td><td>${a.code}</td><td>${statut}</td></tr>`;
-    });
-    htmlImpression += `</table>`;
-    let f = window.open('', '', 'height=700,width=900');
-    f.document.write(htmlImpression); f.document.close(); f.print();
-}
-
-function toggleCache() {
-    if(!cacheActif) {
-        cacheActif = true; document.getElementById('btnCache').innerText = "🔒 Afficher Codes";
-    } else {
-        let code = prompt("Tapez le Code pour AFFICHER:");
-        if(code!== CODE_VOIR) { alert("❌ Code incorrect!"); return; }
-        cacheActif = false; document.getElementById('btnCache').innerText = "👁️ Cacher Codes";
-    }
-    afficher();
-}
-
-function deconnexion() {
-    document.getElementById('pagePrincipale').classList.add('cacher');
-    document.getElementById('pageLogin').classList.remove('cacher');
-    document.getElementById('codeAcces').value = '';
-}
-</script>
 </body>
 </html>
